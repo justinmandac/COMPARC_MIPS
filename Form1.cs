@@ -29,21 +29,28 @@ namespace MiniMIPS_v_0_2
         private bool CLOCK_STATE = false;
         private uint CLOCK_COUNT = 0;
         private int GLOBAL_COUNTER; //maximum current value of cycle counter
+
+        private int rwb = 0;
         
-        //PIPELINE STAGES
+        //Buffer
         private Hashtable IF  = new Hashtable();
         private Hashtable ID  = new Hashtable();
         private Hashtable EX  = new Hashtable();
         private Hashtable MEM = new Hashtable();
-        private Int64     WB  = 0xDEADBEEF;
-        
-        //INTERMEDIATE BUFFERS
+        private Hashtable WB = new Hashtable();
+
+        private byte[] readbuffer = new byte[8];
+        private Boolean readsignal = false;
+
+        //Pipeline
         private Hashtable IFID  = new Hashtable();
         private Hashtable IDEX  = new Hashtable();
         private Hashtable EXMEM = new Hashtable();
         private Hashtable MEMWB = new Hashtable();
-
-        private Boolean executionFinished = false; 
+        private Hashtable WBR = new Hashtable();
+        private string[] test = "r10(1000)".Split(new char[] {'(',')'}, StringSplitOptions.RemoveEmptyEntries);
+        private Boolean executionFinished = false;
+        private Boolean writesignal = false;
 
         public MainWindow()
         {
@@ -55,7 +62,10 @@ namespace MiniMIPS_v_0_2
             dt_PROG_MEM = new DataTable("prog");
 
             GLOBAL_COUNTER = 0;
-            CLOCK_COUNT = 0;
+            for (int i = 0; i < 32; i++)
+                usagemonitor.Add(new Stack());
+
+                CLOCK_COUNT = 0;
             cycle_TextBox.Text = GLOBAL_COUNTER.ToString();
 
             init_dt_gpr();
@@ -78,7 +88,7 @@ namespace MiniMIPS_v_0_2
 
             for (int x = 0; x < 32; x++)
             {
-                dt_GPR.Rows.Add(x,(Int64)0xDEADBEEF);
+                dt_GPR.Rows.Add(x,(Int64)0);
             }
            
             bs_GPR.DataSource = dt_GPR;          
@@ -90,14 +100,36 @@ namespace MiniMIPS_v_0_2
             gprView.Refresh();
 
         }
+
+        private void init_dt_gpr_clear()
+        {
+            dt_GPR.Rows.Clear();
+            dt_GPR.Columns.Clear();
+            dt_GPR.Columns.Add("index");
+            dt_GPR.Columns.Add("value", typeof(Int64));
+
+            for (int x = 0; x < 32; x++)
+            {
+                dt_GPR.Rows.Add(x, (Int64)0);
+            }
+
+            bs_GPR.DataSource = dt_GPR;
+            gprView.DataSource = dt_GPR;
+            gprView.DataSource = bs_GPR;
+            //housekeeping
+            gprView.Columns[0].ReadOnly = true;
+            gprView.Columns[1].DefaultCellStyle.Format = "X"; //set cell formatting to hexadecimal
+            gprView.Refresh();
+
+        }
         private void init_dt_mem()
         {
             dt_DATA_MEM.Columns.Add("address",typeof(Int64));
-            dt_DATA_MEM.Columns.Add("value",typeof(Int64));
+            dt_DATA_MEM.Columns.Add("value",typeof(byte));
 
             for (int x = DATA_SEGMENT_START; x <= DATA_SEGMENT_END; x++)
             {
-                dt_DATA_MEM.Rows.Add((Int64)x,(Int64)0xDEADBEEF);
+                dt_DATA_MEM.Rows.Add((Int64)x,(byte)0x0);
             }
 
             bs_DATA.DataSource = dt_DATA_MEM;
@@ -110,14 +142,66 @@ namespace MiniMIPS_v_0_2
             dataView.Columns[1].DefaultCellStyle.Format = "X";//set cell formatting to hexadecimal
             dataView.Refresh();
         }
+        private void init_dt_mem_clear()
+        {
+            dt_DATA_MEM.Rows.Clear();
+            dt_DATA_MEM.Columns.Clear();
+            dt_DATA_MEM.Columns.Add("address", typeof(Int64));
+            dt_DATA_MEM.Columns.Add("value", typeof(byte));
+
+            for (int x = DATA_SEGMENT_START; x <= DATA_SEGMENT_END; x++)
+            {
+                dt_DATA_MEM.Rows.Add((Int64)x, (byte)0x0);
+            }
+
+            bs_DATA.DataSource = dt_DATA_MEM;
+            dataView.DataSource = dt_DATA_MEM;
+            dataView.DataSource = bs_DATA;
+
+            //housekeeping
+            dataView.Columns[0].DefaultCellStyle.Format = "X";
+            dataView.Columns[0].ReadOnly = true;
+            dataView.Columns[1].DefaultCellStyle.Format = "X";//set cell formatting to hexadecimal
+            dataView.Refresh();
+        }
+
         private void init_dt_prog()
         {
             dt_PROG_MEM.Columns.Add("address", typeof(Int64));
-            dt_PROG_MEM.Columns.Add("value", typeof(Int64));
+            dt_PROG_MEM.Columns.Add("value", typeof(UInt32));
 
-            for (int x = 0; x <= CODE_SEGMENT_END; x++)
+            for (int x = 0; x <= CODE_SEGMENT_END; )
             {
-                dt_PROG_MEM.Rows.Add((Int64)x, (Int64)0xDEADBEEF);
+                dt_PROG_MEM.Rows.Add((Int64)x, (UInt32)0x0);
+                x = x + 4;
+            }
+
+            bs_PROG.DataSource = dt_PROG_MEM;
+            progView.DataSource = dt_PROG_MEM;
+            progView.DataSource = bs_PROG;
+
+            //housekeeping
+            progView.Columns[0].DefaultCellStyle.Format = "X";
+            progView.Columns[0].ReadOnly = true;
+            progView.Columns[1].DefaultCellStyle.Format = "X";//set cell formatting to hexadecimal
+            progView.Refresh();
+        }
+        
+        private void init_dt_prog(ArrayList vals)
+        {
+            dt_PROG_MEM.Rows.Clear();
+            dt_PROG_MEM.Columns.Remove("address");
+            dt_PROG_MEM.Columns.Remove("value");
+            dt_PROG_MEM.Columns.Add("address", typeof(Int64));
+            dt_PROG_MEM.Columns.Add("value", typeof(UInt32));
+
+            for (int x = 0; x <= CODE_SEGMENT_END; )
+            {
+                if(vals.Count - 1 < x/4)
+                    dt_PROG_MEM.Rows.Add((Int64)x, (UInt32)0x0);
+                else
+                    dt_PROG_MEM.Rows.Add((Int64)x, (UInt32)vals[x/4]);
+                x = x + 4;
             }
 
             bs_PROG.DataSource = dt_PROG_MEM;
@@ -134,31 +218,7 @@ namespace MiniMIPS_v_0_2
         //initializes pipeline stages
         private void init_stages()
         {
-            IF.Add("NPC", 0);
-            IF.Add("PC" , 0);
-            IF.Add("IR" , 0xDEADBEEF);
 
-            ID.Add("IR" , 0xDEADBEEF);
-            ID.Add("A"  , 0xDEADBEEF);
-            ID.Add("B"  , 0xDEADBEEF);
-            ID.Add("IMM", 0xDEADBEEF);
-            ID.Add("NPC", 0xDEADBEEF);
-
-
-            EX.Add("IR", 0xDEADBEEF);
-            EX.Add("ALU", 0xDEADBEEF);
-            EX.Add("B", 0xDEADBEEF);
-            EX.Add("COND", 0xDEADBEEF);
-
-            MEM.Add("IR", 0xDEADBEEF);
-            MEM.Add("ALU", 0xDEADBEEF);
-            MEM.Add("LMD", 0xDEADBEEF);
-            MEM.Add("MEM_ALU", 0xDEADBEEF);
-        }
-        
-        //initializes intermediate buffers
-        private void init_buffs()
-        {
             IFID.Add("NPC", 0);
             IFID.Add("PC", 0);
             IFID.Add("IR", 0);
@@ -178,6 +238,36 @@ namespace MiniMIPS_v_0_2
             MEMWB.Add("ALU", 0);
             MEMWB.Add("LMD", 0);
             MEMWB.Add("MEM_ALU", 0);
+
+            WBR.Add("Rn", 0);
+        }
+        
+        //initializes intermediate buffers
+        private void init_buffs()
+        {
+            IF.Add("NPC", 0);
+            IF.Add("PC", 0);
+            IF.Add("IR", 0);
+
+            ID.Add("IR", 0);
+            ID.Add("A", 0);
+            ID.Add("B", 0);
+            ID.Add("IMM", 0);
+            ID.Add("NPC", 0);
+
+            EX.Add("IR", 0);
+            EX.Add("ALU", 0);
+            EX.Add("B", 0);
+            EX.Add("COND", 0);
+
+            MEM.Add("IR", 0);
+            MEM.Add("ALU", 0);
+            MEM.Add("LMD", 0);
+            MEM.Add("MEM_ALU", 0);
+
+            WB.Add("Rn", 0);
+
+            
         }
 
         //updates the contents of UI textboxes.
@@ -223,7 +313,8 @@ namespace MiniMIPS_v_0_2
             MEMWB_LMD_Textbox.Text    = String.Format("{0,10:X}", MEMWB["LMD"]);
             MEMWB_MEMALU_Textbox.Text = String.Format("{0,10:X}", MEMWB["MEM_ALU"]);
 
-            WB_RN_Textbox.Text = String.Format("{0,10:X}", WB);
+            WB_textbox.Text = String.Format("{0,10:X}", WB["Rn"]);
+            WB_RN_Textbox.Text = String.Format("{0,10:X}", WBR["Rn"]);
         }
 
         //returns the value of general purpose register R<index> stored in GPR[index].
@@ -245,23 +336,36 @@ namespace MiniMIPS_v_0_2
             }
         }
         //
-        private Int64 read_data_memory(int  address)
+        private byte read_data_memory(int  address)
         {
 
             if (address < DATA_SEGMENT_START || address > DATA_SEGMENT_END)
+            {
+                return 0xFF;
+            }
+            else
+            {
+                return (byte)dt_DATA_MEM.Rows[address].ItemArray[1];
+            }
+
+        }
+        private UInt32 read_prog_memory(int address)
+        {
+
+            if (address < 0 || address > CODE_SEGMENT_END)
             {
                 return 0xFEEDFACE;
             }
             else
             {
-                return (Int64)dt_DATA_MEM.Rows[address].ItemArray[1];
+                return (UInt32)dt_PROG_MEM.Rows[address/4].ItemArray[1];
             }
 
         }
        
         //writes a value into a general purpose register R<index>
         //returns -1 for incorrect index ranges; -2 for trying to write to R0; and 0 for a succesful write.
-        private int write_reg_content(int index , Int64 data)
+        private int write_reg_content(int index , UInt64 data)
         {
             if (index > 31 || index < 0)
             {
@@ -280,7 +384,7 @@ namespace MiniMIPS_v_0_2
         
         //writes data into data memory located at <address>
         //returns -1 for trying to access an incorrect address; 0 for a successful write.
-        private int write_data_memory(int address, Int64 data)
+        private int write_data_memory(int address, byte data)
         {
             if (address < DATA_SEGMENT_START || address > DATA_SEGMENT_END)
             {
@@ -293,23 +397,281 @@ namespace MiniMIPS_v_0_2
             }
         }
 
+        private bool stallfromfetch = false;
+        private bool stallfromdecode = false;
+        private bool stallfromexecute = false;
+        private bool stallfrommem = false;
+        private bool stallfromwb = false;
+
+        private byte[] writebuffer = new byte[8];
+        private Int64[] regbuffer = new Int64[32];
+        private ArrayList usagemonitor = new ArrayList();
+        private int[] usagemonitorflag = new int[32];
         private void fetch()
         {
+            if(!stallfromdecode && !stallfromexecute && !stallfrommem && !stallfromwb)
+            {
+                IF["IR"] = read_prog_memory((int)IFID["PC"]);
+                int var = (int)IFID["IR"];
+                int npc = branchorjump((UInt32)var);
+                if (npc < 0)
+                {
+                    npc = (int)IFID["PC"] + 4;
+                }
+                IF["NPC"] = npc;
+                IF["PC"] = npc;
+            }
+            
+        }
 
+        private int branchorjump(UInt32 ir)
+        {
+            //later for branching and jumping
+            return -1;
         }
         private void decode()
         {
+            if (!stallfromexecute && !stallfrommem && !stallfromwb && (int)IFID["IR"] != 0)
+            {
+                int curop = opcode((UInt32)IFID["IR"]);
+                if (curop == 4 && ((Stack)(usagemonitor[rsregOrA((UInt32)IFID["IR"])])).Count > 0)
+                {
+                    stallfromdecode = true;
+                }
+                else
+                {
+                    stallfromdecode = false;
+                    ID["IR"] = IFID["IR"];
+                    ID["A"] = read_reg_content(rsregOrA((UInt32)IFID["IR"]));
+                    ID["B"] = read_reg_content(rtregOrB((UInt32)IFID["IR"]));
+                    ID["Imm"] = immoffset((UInt32)IFID["IR"]);
+
+                    if (curop == 0)
+                    {
+                        int rd = rdreg((UInt32)IFID["IR"]);
+                        ((Stack)(usagemonitor[rd])).Push(1);
+                    }
+                    else if (curop == 13 || curop == 25 || curop == 55)
+                    {
+                        int rd = rtregOrB((UInt32)IFID["IR"]);
+                        ((Stack)(usagemonitor[rd])).Push(1);
+                    }
+                }
+            }
         }
         private void execute()
         {
+            if (!stallfrommem && !stallfromwb && (int)IDEX["IR"] != 0)
+            {
+                int curop = opcode((UInt32)IDEX["IR"]);
+                if (curop == 0)
+                {
+                    if (((Stack)(usagemonitor[rsregOrA((UInt32)IDEX["IR"])])).Count > 0 || ((Stack)(usagemonitor[rtregOrB((UInt32)IDEX["IR"])])).Count > 0)
+                    {
+                        stallfromexecute = true;
+                    }
+                    else
+                    {
+                        stallfromexecute = false;
+                        EX["IR"] = IDEX["IR"];
+                        EX["B"] = IDEX["B"];
+                        int funcode = funccode((UInt32)IDEX["IR"]);
+                        long res = 0;
+                        if (funcode == 45)
+                            res = regbuffer[rsregOrA((UInt32)IDEX["IR"])] + regbuffer[rtregOrB((UInt32)IDEX["IR"])];
+                        if (funcode == 47)
+                            res = regbuffer[rsregOrA((UInt32)IDEX["IR"])] - regbuffer[rtregOrB((UInt32)IDEX["IR"])];
+                        if (funcode == 36)
+                            res = regbuffer[rsregOrA((UInt32)IDEX["IR"])] & regbuffer[rtregOrB((UInt32)IDEX["IR"])];
+                        if (funcode == 22)
+                            res = regbuffer[rsregOrA((UInt32)IDEX["IR"])] >> (byte)regbuffer[rtregOrB((UInt32)IDEX["IR"])];
+                        if (funcode == 42)
+                            if (regbuffer[rsregOrA((UInt32)IDEX["IR"])] < regbuffer[rtregOrB((UInt32)IDEX["IR"])])
+                                res = 1;
+                            else
+                                res = 0;
+                        EX["ALU"] = res;
+                        int rd = rdreg((UInt32)IDEX["IR"]);
+                        regbuffer[rd] = res;
+                        usagemonitorflag[rd] = 1;
+                    }
+                } else if (curop ==4 )
+                {
+                    EX["IR"] = IDEX["IR"];
+                    EX["B"] = IDEX["B"];
+                    EX["ALU"] = (long)immoffset((UInt32)IDEX["IR"]) * 4 + (long)IDEX["NPC"];
+                } else if (curop ==2 )
+                {
+                    EX["IR"] = IDEX["IR"];
+                    EX["B"] = IDEX["B"];
+                    EX["ALU"] = (long)joffset((UInt32)IDEX["IR"]) * 4;
+                }
+                else if (curop == 13 || curop == 25)
+                {
+                    if (((Stack)(usagemonitor[rsregOrA((UInt32)IDEX["IR"])])).Count > 0)
+                    {
+                        stallfromexecute = true;
+                    }
+                    else
+                    {
+                        stallfromexecute = false;
+                        EX["IR"] = IDEX["IR"];
+                        EX["B"] = IDEX["B"];
+
+                        long res = 0;
+                        if (curop == 13)
+                            res = (long) ((UInt64)IDEX["Imm"] | (UInt64)regbuffer[rsregOrA((UInt32)IDEX["IR"])]);
+                        if (curop == 25)
+                            res = (long)(IDEX["Imm"]) + regbuffer[rsregOrA((UInt32)IDEX["IR"])];
+                        int rd = rtregOrB((UInt32)IDEX["IR"]);
+                        EX["ALU"] = res;
+                        regbuffer[rd] = res;
+                        usagemonitorflag[rd] = 1;
+                    }
+                }
+                else if (curop == 63 || curop == 55)
+                {
+                    if (((Stack)(usagemonitor[rsregOrA((UInt32)IDEX["IR"])])).Count > 0)
+                    {
+                        stallfromexecute = true;
+                    }
+                    else
+                    {
+                        stallfromexecute = false;
+                        EX["IR"] = IDEX["IR"];
+                        EX["B"] = IDEX["B"];
+
+                        long res = 0;
+                        res = (long)(IDEX["Imm"]) + regbuffer[rsregOrA((UInt32)IDEX["IR"])];
+                        EX["ALU"] = res;
+                    }
+                }
+                   
+                
+            }
         }
         private void memory_access()
         {
+            if ((int)EXMEM["IR"] != 0)
+            {
+                int curop = opcode((UInt32)EXMEM["IR"]);
+                if (curop == 55)
+                {
+                    //load here to LMD
+
+                    MEM["IR"] = EXMEM["IR"];
+                    MEM["ALU"] = EXMEM["ALU"];
+                    long add = (long)EXMEM["ALU"];
+                    for (int i = 7; i >= 0; i--)
+                    {
+                        readbuffer[7] = (byte)read_data_memory((int)add);
+                        add = add + 1;
+                    }
+                    readsignal = true;
+                }
+                if (curop == 63)
+                {
+                    if (((Stack)(usagemonitor[rtregOrB((UInt32)EXMEM["IR"])])).Count > 0)
+                    {
+                        stallfrommem = true;
+                    }
+                    else
+                    {
+                        stallfrommem = false;
+                        MEM["IR"] = EXMEM["IR"];
+                        MEM["ALU"] = EXMEM["ALU"];
+                        UInt64 fortrans = (UInt64)regbuffer[rtregOrB((UInt32)EXMEM["IR"])];
+                        for (int i = 7; i >= 0; i--)
+                        {
+                            byte temp = (byte)fortrans;
+                            writebuffer[i] = temp;
+                            fortrans = fortrans >> 8;
+                        }
+                        writesignal = true;
+                        //store word here
+                    }
+                }
+                else
+                {
+                    MEM["IR"] = EXMEM["IR"];
+                    MEM["ALU"] = EXMEM["ALU"];
+                }
+            }
+
         }
         private void writeback()
         {
+            if ((int)EXMEM["IR"] != 0)
+            {
+                int curop = opcode((UInt32)MEMWB["IR"]);
+                if (curop == 0)
+                {
+                    rwb = rdreg((UInt32)MEMWB["IR"]);
+                    WB["Rn"] = MEMWB["ALU"];
+                }
+                else if (curop == 13 || curop == 25)
+                {
+                    rwb = rtregOrB((UInt32)MEMWB["IR"]);
+                    WB["Rn"] = MEMWB["ALU"];
+                }
+                else if (curop == 55)
+                {
+                    rwb = rtregOrB((UInt32)MEMWB["IR"]);
+                    WB["Rn"] = MEMWB["LMD"];
+                }
+            }
+            
+            
         }
-        
+
+
+        private int opcode(UInt32 ir) 
+        {
+            UInt32 mask = 0xFC000000;
+            UInt32 opcode = ir & mask >> 26;
+
+            return (int)opcode;
+        }
+        private int rsregOrA(UInt32 ir)
+        {
+            UInt32 mask = 0x3E00000;
+            UInt32 rs = ir & mask >> 21;
+            return (int)rs;
+        }
+        private int rtregOrB(UInt32 ir)
+        {
+            UInt32 mask = 0x1F0000;
+            UInt32 rt = ir & mask >> 16;
+            return (int)rt;
+        }
+        private int immoffset(UInt32 ir)
+        {
+            UInt32 mask = 0x0000FFFF;
+            UInt32 imm = ir & mask;
+            return (int)imm;
+        }
+        private int rdreg(UInt32 ir)
+        {
+            UInt32 mask = 0xF800;
+            UInt32 rd = mask & ir >> 11;
+
+            return (int)rd;
+        }
+        private int funccode(UInt32 ir)
+        {
+            UInt32 mask = 0x3F;
+            UInt32 fnc = mask & ir;
+
+            return (int)fnc;
+        }
+        private int joffset(UInt32 ir)
+        {
+            UInt32 mask = 0x3FFFFFF;
+            UInt32 joff = mask & ir;
+            return (int)joff;
+        }
+
+
         //Instructions will be sent to  their corresponding buffers upon CLOCK UP
         //buffer_IF() copies the contents of IF to IFID
         private void buffer_IF()
@@ -334,6 +696,10 @@ namespace MiniMIPS_v_0_2
             EXMEM["ALU"]  = EX["ALU"];
             EXMEM["COND"] = EX["COND"];
             EXMEM["B"]    = EX["B"];
+
+
+
+
         }
         //buffer_MEM() copies the contents of MEM to MEMWB
         private void buffer_MEM()
@@ -343,6 +709,7 @@ namespace MiniMIPS_v_0_2
             MEMWB["LMD"] = MEM["LMD"];
             MEMWB["MEM_ALU"] = MEM["MEM_ALU"];
         }
+
 
         //Transfers are done upon CLOCK DOWN
         //IFID_to_ID transfers the relevant registers from IFID to the ID stage
@@ -398,10 +765,11 @@ namespace MiniMIPS_v_0_2
             if (!CLOCK_STATE) //CLOCK GOES FROM LOW TO HIGH
             {
                 //buffer contents of pipeline stages
-                buffer_IF();
-                buffer_ID();
-                buffer_EX();
-                buffer_MEM();
+                writeback();
+                memory_access();
+                execute();
+                decode();
+                fetch();
                 //toggle clock state
                 CLOCK_STATE = !CLOCK_STATE;
                 clockButton.Text = "CLOCK DOWN";
@@ -409,9 +777,36 @@ namespace MiniMIPS_v_0_2
             }
             else
             { // CLOCK GOES FROM HIGH TO LOW
-                IFID_to_ID();
-                IDEX_to_EX();
-                EXMEM_to_MEM();
+                buffer_IF();
+                buffer_ID();
+                buffer_EX();
+                buffer_MEM();
+
+                for (int i = 0; i < 32; i++)
+                {
+                    if (usagemonitorflag[i] == 1)
+                    {
+                        usagemonitorflag[i] = 0;
+                        ((Stack)(usagemonitor[i])).Pop();
+                    }
+                }
+                if (writesignal)
+                {
+                    int effadd = (int)MEMWB["ALU"];
+                    for (int i = 7; i >= 0; i--)
+                    {
+
+                        write_data_memory(effadd + i, writebuffer[i]);
+                        writebuffer[i] = 0;
+                    }
+                    writesignal = false;
+                }
+                if (readsignal)
+                {
+                    MEMWB["LMD"] = 0xDEADBEEF;
+                    readsignal = false;
+                }
+
                 CLOCK_STATE = !CLOCK_STATE;
                 clockButton.Text = "CLOCK UP";
                 CLOCK_COUNT++;
@@ -431,9 +826,11 @@ namespace MiniMIPS_v_0_2
 
         private void loadProgramButton_Click(object sender, EventArgs e)
         {
-            //error checking of code
-            //parse
-            //load to program memory
+            ArrayList res = mipsparser.processASM(program_input_TextBox.Lines);
+            if (res == null)
+                MessageBox.Show(mipsparser.errorcollection);
+            else
+                init_dt_prog(res);
             startButton.Enabled = true;
         }
 
@@ -441,6 +838,32 @@ namespace MiniMIPS_v_0_2
         {
 
         }
+
+        private void button2_Click(object sender, EventArgs e)
+        {
+            init_dt_mem_clear();
+        }
+
+        private void button3_Click(object sender, EventArgs e)
+        {
+            init_dt_gpr_clear();
+            for (int i = 0; i < 32; i++)
+            {
+                regbuffer[i] = 0;
+            }
+        }
+
+        private void startButton_Click(object sender, EventArgs e)
+        {
+            for(int i = 0; i < 32; i++)
+            {
+                regbuffer[i] = read_reg_content(i);
+            }
+        }
+
+
+
+
         
         
     }
