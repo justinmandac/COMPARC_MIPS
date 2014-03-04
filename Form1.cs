@@ -313,7 +313,7 @@ namespace MiniMIPS_v_0_2
             MEMWB_LMD_Textbox.Text    = String.Format("{0,10:X}", MEMWB["LMD"]);
             MEMWB_MEMALU_Textbox.Text = String.Format("{0,10:X}", MEMWB["MEM_ALU"]);
 
-            WB_textbox.Text = String.Format("{0,10:X}", WB["Rn"]);
+            WB_RN_Textbox.Text = String.Format("{0,10:X}", WB["Rn"]);
             WB_RN_Textbox.Text = String.Format("{0,10:X}", WBR["Rn"]);
         }
 
